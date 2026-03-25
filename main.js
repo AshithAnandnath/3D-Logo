@@ -8,9 +8,15 @@ let spinGlow;
 
 let isDragging    = false;
 let prevX         = 0;
+let prevY         = 0;
 let currentSpeed  = 0;
 let targetSpeed   = 0;
 let glowIntensity = 0;
+
+// NEW: vertical tilt control
+let targetTiltX   = 0;
+let currentTiltX  = 0;
+const maxTiltX    = 0.5; // limit vertical tilt angle
 
 // DETECT MOBILE 
 const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i
@@ -38,13 +44,12 @@ function init() {
 
   // RENDERER 
   renderer = new THREE.WebGLRenderer({
-    antialias: !isMobile,   // antialias off on mobile = big perf gain
+    antialias: !isMobile,
     powerPreference: 'high-performance',
   });
 
   renderer.setSize(window.innerWidth, window.innerHeight);
 
-  
   renderer.setPixelRatio(isMobile
     ? Math.min(window.devicePixelRatio, 1.5)
     : Math.min(window.devicePixelRatio, 2)
@@ -54,15 +59,12 @@ function init() {
   renderer.toneMapping         = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.6;
 
-  
   renderer.shadowMap.enabled = !isMobile;
   renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
 
   document.body.appendChild(renderer.domElement);
 
-
   // LIGHTING — 6 SPOTLIGHTS + KEY + FILL + RIM + AMBIENT
-
   scene.add(new THREE.AmbientLight(0x2a1a4a, 4.0));
 
   // Key — white
@@ -174,6 +176,7 @@ function init() {
   canvas.addEventListener('mousedown', (e) => {
     isDragging = true;
     prevX = e.clientX;
+    prevY = e.clientY;
     targetSpeed = 0;
     currentSpeed = 0;
     canvas.style.cursor = 'grabbing';
@@ -181,48 +184,64 @@ function init() {
 
   canvas.addEventListener('mousemove', (e) => {
     if (!isDragging || !pivot) return;
-    const delta = e.clientX - prevX;
-    targetSpeed = delta * 0.006;
+
+    const deltaX = e.clientX - prevX;
+    const deltaY = e.clientY - prevY;
+
+    targetSpeed = deltaX * 0.006;
+    targetTiltX += deltaY * 0.01;
+    targetTiltX = THREE.MathUtils.clamp(targetTiltX, -maxTiltX, maxTiltX);
+
     prevX = e.clientX;
+    prevY = e.clientY;
   });
 
   canvas.addEventListener('mouseup', () => {
     isDragging = false;
+    targetTiltX = 0; // return to original vertical position
     canvas.style.cursor = 'grab';
   });
 
   canvas.addEventListener('mouseleave', () => {
     isDragging = false;
+    targetTiltX = 0;
+    canvas.style.cursor = 'grab';
   });
 
   // Touch 
   canvas.addEventListener('touchstart', (e) => {
-    // Don't preventDefault here — allows tap events to fire normally
     isDragging   = true;
     prevX        = e.touches[0].clientX;
+    prevY        = e.touches[0].clientY;
     targetSpeed  = 0;
     currentSpeed = 0;
   }, { passive: true });
 
   canvas.addEventListener('touchmove', (e) => {
-    //MOBILE FIX: preventDefault stops page scroll while dragging model
-    // passive:false required for preventDefault to work
     e.preventDefault();
     if (!isDragging || !pivot) return;
-    const delta = e.touches[0].clientX - prevX;
-    targetSpeed = delta * 0.006;
+
+    const deltaX = e.touches[0].clientX - prevX;
+    const deltaY = e.touches[0].clientY - prevY;
+
+    targetSpeed = deltaX * 0.006;
+    targetTiltX += deltaY * 0.01;
+    targetTiltX = THREE.MathUtils.clamp(targetTiltX, -maxTiltX, maxTiltX);
+
     prevX = e.touches[0].clientX;
-  }, { passive: false });   // ← must be false
+    prevY = e.touches[0].clientY;
+  }, { passive: false });
 
   canvas.addEventListener('touchend', () => {
     isDragging = false;
+    targetTiltX = 0;
   });
 
   canvas.addEventListener('touchcancel', () => {
     isDragging = false;
+    targetTiltX = 0;
   });
 
-  // ─ Resize — handles phone rotation (portrait and also landscape) 
   window.addEventListener('resize', onWindowResize);
 }
 
@@ -231,12 +250,28 @@ function animate() {
 
   const t = Date.now() * 0.001;
 
-  // Spin
+  // Spin + vertical tilt
   if (pivot) {
     currentSpeed += isDragging
       ? (targetSpeed - currentSpeed) * 0.18
       : (0 - currentSpeed) * 0.04;
-    pivot.rotation.z += currentSpeed;
+
+    if (isDragging) {
+    currentTiltX += (targetTiltX - currentTiltX) * 0.18;
+    } else {
+  // Stronger return-to-origin
+    currentTiltX += (0 - currentTiltX) * 0.12;
+
+  // Snap to exact 0 when very close (prevents tiny drift)
+    if (Math.abs(currentTiltX) < 0.001) {
+      currentTiltX = 0;
+    }
+  }
+
+    pivot.rotation.x = currentTiltX;  // vertical tilt
+
+    pivot.rotation.z += currentSpeed;   // existing horizontal spin
+        
   }
 
   // Spin glow 
@@ -272,7 +307,6 @@ function animate() {
 }
 
 function onWindowResize() {
-  // Handles both browser resize AND phone orientation change
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
